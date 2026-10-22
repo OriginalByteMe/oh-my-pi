@@ -72,6 +72,16 @@ export interface TinyChatMessage {
 	content: string;
 }
 
+/** One labeled span a token-classification worker found in an input text. */
+export interface TinyEntity {
+	/** Entity label without BIO prefix, e.g. `EMAIL_ADDRESS`. */
+	label: string;
+	/** The span as written in the input text (falls back to the decoded tokens when it cannot be located). */
+	text: string;
+	/** Mean token probability for the span, 0..1. */
+	score: number;
+}
+
 export type TinyWorkerRequest =
 	| { type: "ping"; id: string }
 	/** Download (if needed) and load the worker's model, streaming `progress` then `loaded`. */
@@ -87,6 +97,8 @@ export type TinyWorkerRequest =
 			stop?: string;
 			maxNewTokens: number;
 	  }
+	/** Label spans in every text of a token-classification model; texts of any length (the worker windows them). */
+	| { type: "classify"; id: string; texts: readonly string[] }
 	/** Exit now (a client found a stale launch tag and will respawn). */
 	| { type: "shutdown"; id: string };
 
@@ -95,4 +107,6 @@ export type TinyWorkerResponse =
 	| { type: "progress"; id: string; event: TinyTitleProgressEvent }
 	| { type: "loaded"; id: string }
 	| { type: "text"; id: string; text: string }
+	/** Reply to `classify`: spans per input text, same order; empty array = nothing found. */
+	| { type: "entities"; id: string; entities: TinyEntity[][] }
 	| { type: "error"; id: string; error: string };

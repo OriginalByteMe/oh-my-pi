@@ -44,6 +44,7 @@ import {
 	TINY_WORKER_SOCKET_ENV,
 	TINY_WORKER_TAG_ENV,
 	type TinyChatMessage,
+	type TinyEntity,
 	type TinyTitleProgressEvent,
 	type TinyWorkerBackend,
 	type TinyWorkerRequest,
@@ -65,12 +66,16 @@ type WorkerHandle = RefCountedWorkerHandle<TinyWorkerRequest, TinyWorkerResponse
 type PendingRequest =
 	| { kind: "title"; modelKey: TinyLocalModelKey; source: string; resolve: (title: string | null) => void }
 	| { kind: "chat"; modelKey: TinyLocalModelKey; resolve: (text: string | null) => void }
-	| { kind: "load"; modelKey: TinyLocalModelKey; resolve: (result: TinyTitleDownloadResult) => void };
+	| { kind: "load"; modelKey: TinyLocalModelKey; resolve: (result: TinyTitleDownloadResult) => void }
+	| { kind: "classify"; modelKey: TinyLocalModelKey; resolve: (result: TinyClassifyResult) => void };
 
 export interface TinyTitleDownloadResult {
 	ok: boolean;
 	error?: string;
 }
+
+/** Outcome of one `classify` request: the spans per text, or why the worker could not produce them. */
+type TinyClassifyResult = { ok: true; entities: TinyEntity[][] } | { ok: false; error: string };
 
 export interface TinyTitleDownloadOptions {
 	signal?: AbortSignal;
@@ -198,8 +203,8 @@ function mlxLaunch(
 	modelKey: TinyLocalModelKey,
 	emitProgress: (event: TinyTitleProgressEvent) => void,
 ): TinyWorkerLaunch {
-	const spec = getTinyLocalModelSpec(modelKey);
-	if (!spec) throw new Error(`Unknown tiny local model: ${modelKey}`);
+	const mlxRepo = getTinyLocalModelSpec(modelKey)?.mlxRepo;
+	if (!mlxRepo) throw new Error(`Tiny local model ${modelKey} has no MLX build`);
 	const tag = `mlx|${MLX_LM_VERSION}|${Bun.hash.crc32(MLX_SERVER_SCRIPT).toString(16)}`;
 	return {
 		label: `tiny mlx worker for ${modelKey}`,
@@ -229,9 +234,9 @@ function mlxLaunch(
 				"--model-key",
 				modelKey,
 				"--repo",
-				spec.mlxRepo,
+				mlxRepo,
 				"--dir",
-				getTinyMlxModelDir(spec.mlxRepo),
+				getTinyMlxModelDir(mlxRepo),
 				"--idle-seconds",
 				String(idleSeconds),
 			];
@@ -307,7 +312,7 @@ export class TinyTitleClient {
 	}
 
 	async #connectDefault(modelKey: TinyLocalModelKey): Promise<WorkerHandle> {
-		if (tinyWorkerUsesMlx()) {
+		if (tinyWorkerUsesMlx() && getTinyLocalModelSpec(modelKey)?.mlxRepo) {
 			try {
 				return await connectTinyWorker(
 					mlxLaunch(modelKey, event => this.#emitProgress(event)),
@@ -395,6 +400,24 @@ export class TinyTitleClient {
 		options: TinyModelCompletionOptions = {},
 	): Promise<string | null> {
 		return this.chat(modelKey, buildCompletionMessages(promptText, options.systemPrompt), options);
+	}
+
+	/**
+	 * Label spans in `texts` with a token-classification model (see `TINY_CLASSIFIER_LOCAL_MODELS`);
+	 * one entity array per text, same order. Unlike {@link chat} this throws on failure, because a
+	 * caller that needs the answer (the privacy gate) must not mistake "no worker" for "no findings".
+	 */
+	async classify(modelKey: string, texts: readonly string[], signal?: AbortSignal): Promise<TinyEntity[][]> {
+		if (!isTinyLocalModelKey(modelKey)) throw new Error(`Unknown tiny local model: ${modelKey}`);
+		signal?.throwIfAborted();
+		const { promise, resolve } = Promise.withResolvers<TinyClassifyResult>();
+		const request: TinyWorkerRequest = { type: "classify", id: String(++this.#nextRequestId), texts };
+		const result = await this.#run(request, { kind: "classify", modelKey, resolve }, promise, signal, () =>
+			resolve({ ok: false, error: "aborted" }),
+		);
+		signal?.throwIfAborted();
+		if (!result.ok) throw new Error(`${modelKey} classification failed: ${result.error}`);
+		return result.entities;
 	}
 
 	async downloadModel(modelKey: string, options: TinyTitleDownloadOptions = {}): Promise<TinyTitleDownloadResult> {
@@ -536,6 +559,10 @@ export class TinyTitleClient {
 			else if (pending.kind === "chat") pending.resolve(message.text.trim() || null);
 			return;
 		}
+		if (message.type === "entities") {
+			if (pending.kind === "classify") pending.resolve({ ok: true, entities: message.entities });
+			return;
+		}
 		if (pending.kind === "load") pending.resolve({ ok: true });
 	}
 
@@ -553,11 +580,13 @@ export class TinyTitleClient {
 	#fail(pending: PendingRequest, error: string | undefined): void {
 		this.#emitProgress({ modelKey: pending.modelKey, status: "error" }, error);
 		if (pending.kind === "load") pending.resolve(error === undefined ? { ok: false } : { ok: false, error });
+		else if (pending.kind === "classify") pending.resolve({ ok: false, error: error ?? "worker went away" });
 		else pending.resolve(null);
 	}
 
 	#markFailedModel(pending: PendingRequest): void {
-		if (pending.kind !== "load") this.#failedModels.set(pending.modelKey, tinyModelEnvKey());
+		if (pending.kind === "title" || pending.kind === "chat")
+			this.#failedModels.set(pending.modelKey, tinyModelEnvKey());
 	}
 
 	#emitProgress(event: TinyTitleProgressEvent, error?: string): void {

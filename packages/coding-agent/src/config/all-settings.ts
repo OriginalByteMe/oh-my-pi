@@ -32,6 +32,7 @@ import * as idaSettings from "../ida/settings";
 import * as mcpSettings from "../mcp/settings";
 import * as blobBrokerSettings from "../blob-broker/settings";
 import * as secretsSettings from "../secrets/settings";
+import * as privacySettings from "../privacy/settings";
 import * as ttsSettings from "../tts/settings";
 import * as sttSettings from "../stt/settings";
 import * as liveSettings from "../live/settings";
@@ -72,6 +73,7 @@ const DOMAINS: readonly Readonly<Record<string, unknown>>[] = [
 	mcpSettings,
 	blobBrokerSettings,
 	secretsSettings,
+	privacySettings,
 	sttSettings,
 	collabSettings,
 	commandsSettings,

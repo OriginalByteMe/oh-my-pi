@@ -989,6 +989,8 @@ export class AgentSession implements SettingsScope {
 	#titleSystemPrompt: string | undefined;
 	/** Name the session from the operator's messages (see {@link AgentSessionConfig.autoTitle}). */
 	readonly #autoTitle: boolean;
+	/** See {@link AgentSessionConfig.clearsTitleText}. */
+	readonly #clearsTitleText: AgentSessionConfig["clearsTitleText"];
 	#titleGenerationInFlightFor: string | undefined;
 	/** First-message auto-title that may be retried from conversation context.
 	 *  Once the title model declines the message (greeting-like or too ambiguous,
@@ -2080,6 +2082,7 @@ export class AgentSession implements SettingsScope {
 		this.agent.serviceTierResolver = model => this.#models.effectiveServiceTier(model);
 		this.#titleSystemPrompt = config.titleSystemPrompt;
 		this.#autoTitle = config.autoTitle === true;
+		this.#clearsTitleText = config.clearsTitleText;
 		this.#transformContext = config.transformContext ?? (messages => messages);
 		this.#sideStreamFn = config.sideStreamFn ?? streamSimple;
 		this.#onPayload = config.onPayload;
@@ -10477,6 +10480,11 @@ export class AgentSession implements SettingsScope {
 			? AbortSignal.any([signal, this.#titleGenerationAbortController.signal])
 			: this.#titleGenerationAbortController.signal;
 		if (titleSignal.aborted) return null;
+		// A title request goes straight to the title model, past the conversation's PII gate.
+		if (this.#clearsTitleText && !(await this.#clearsTitleText(firstMessage, titleSignal))) {
+			logger.debug("title-generator: skipped, the PII gate did not clear the text", { sessionId });
+			return null;
+		}
 		// The title request carries user text, so it follows this session's own credential
 		// redaction policy like its conversation requests (see `settingsAwareStreamFn`).
 		const title = await withCredentialRedaction(cfgSecretsEnabled.get(this.settings), () =>

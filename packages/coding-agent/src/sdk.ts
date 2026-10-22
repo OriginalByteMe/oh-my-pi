@@ -396,6 +396,8 @@ import {
 	cfgMcpStartupTimeoutMs,
 } from "./mcp/settings";
 import { cfgPlanEnabled } from "./plan-mode/settings";
+import { isLocalModel, PiiGate, PiiGateBlockedError, type PiiGateDeps } from "./privacy/pii-gate";
+import { cfgPrivacyLocalModel, cfgPrivacyPiiGate } from "./privacy/settings";
 import { cfgSecretsEnabled } from "./secrets/settings";
 import {
 	cfgSnapcompactShape,
@@ -897,6 +899,12 @@ export interface CreateAgentSessionOptions {
 	 * keeps saved-reset consent off the extension UI context. Default: `hasUI`.
 	 */
 	interactivePrompts?: boolean;
+	/**
+	 * Detector and hardware probe behind the `privacy.piiGate` setting; the defaults are the local
+	 * ONNX detector and the real probe. Tests inject fakes so no model is downloaded.
+	 * @internal
+	 */
+	piiGateDeps?: PiiGateDeps;
 	/** Keep `ask` advertised in a headless fork sharing a parent's tool-schema prefix; calls still fail without UI. */
 	advertiseHeadlessAsk?: boolean;
 	/**
@@ -4357,9 +4365,58 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			return obfuscateMessages(obfuscator, converted);
 		};
 
+		const transformContextBase = async (messages: AgentMessage[], signal?: AbortSignal) =>
+			wrapSteeringForModel(await extensionRunner.emitContext(messages, signal));
+		// PII privacy gate (`privacy.piiGate`). It scans the messages after the context hooks, so it sees what
+		// the provider would receive, and every request built from session messages passes it.
+		const piiGate = new PiiGate(
+			{
+				enabled: () => cfgPrivacyPiiGate.get(settings),
+				model: () => agent?.state.model ?? model,
+				localModelSelector: () => cfgPrivacyLocalModel.get(settings).trim(),
+				resolveLocalModel: () => {
+					const selector = cfgPrivacyLocalModel.get(settings).trim();
+					if (!selector) return undefined;
+					const resolved = resolveModelRoleValue(selector, modelRegistry.getAvailable(), {
+						settings,
+						matchPreferences: getModelMatchPreferences(settings),
+					});
+					// A cloud model in this setting must never be offered as the private choice.
+					if (!resolved.model || !isLocalModel(resolved.model)) return undefined;
+					return {
+						model: resolved.model,
+						thinkingLevel: resolved.explicitThinkingLevel ? resolved.thinkingLevel : undefined,
+					};
+				},
+				select: () => {
+					if (!extensionRunner.hasUI() || options.interactivePrompts === false) return undefined;
+					const ui = extensionRunner.getUIContext();
+					return (title, choices, dialogOptions) => ui.select(title, choices, dialogOptions);
+				},
+				switchModel: ({ model: local, thinkingLevel }) => session.setModelTemporary(local, thinkingLevel),
+			},
+			options.piiGateDeps,
+		);
+		// The agent loop's context transform. A blocked request ends the turn as an abort carrying the gate's
+		// message: no retry, no model fallback, no provider error turn. The loop reads its model after this
+		// runs, so a model switch made by the gate applies to the same request.
 		const transformContext = async (messages: AgentMessage[], signal?: AbortSignal) => {
-			const withContext = await extensionRunner.emitContext(messages, signal);
-			return wrapSteeringForModel(withContext);
+			const transformed = await transformContextBase(messages, signal);
+			try {
+				await piiGate.check(transformed, { signal, redirectable: true });
+			} catch (error) {
+				if (error instanceof PiiGateBlockedError) agent.abort(error.message);
+				throw error;
+			}
+			return transformed;
+		};
+		// Side requests (`/btw`, handoff, compaction, the title fork) name their model up front, so a switch
+		// made by the gate could not redirect them: the gate offers send/cancel only, and a block only fails
+		// that request instead of aborting the main turn.
+		const transformSideContext = async (messages: AgentMessage[], signal?: AbortSignal) => {
+			const transformed = await transformContextBase(messages, signal);
+			await piiGate.check(transformed, { signal, redirectable: false });
+			return transformed;
 		};
 		// Per-request provider-context transforms. Obfuscate FIRST so secrets are
 		// redacted from text before snapcompact rasterizes it into PNG frames. Clamp
@@ -4831,7 +4888,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 					: undefined,
 			builtInToolNames: builtInRegistryToolNames,
 			mcpManagerToolNames: initialMcpManagerToolNames,
-			transformContext,
+			transformContext: transformSideContext,
 			transformProviderContext,
 			onPayload,
 			onResponse,
@@ -4892,6 +4949,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			advisorMcpResources: cursorMcpResources,
 			titleSystemPrompt: options.titleSystemPrompt,
 			autoTitle: options.autoTitle === true && !isSubagentSession,
+			clearsTitleText: (text, signal) => piiGate.clears(text, signal),
 		});
 		hasSession = true;
 		credentialNoticeSession = session;

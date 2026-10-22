@@ -151,3 +151,4 @@ Environment variables are collected first, file-defined entries follow, and the 
 ## See also
 
 - [`auth-broker-gateway.md`](./auth-broker-gateway.md) -- remote credential vault and forward-proxy that keep provider OAuth refresh tokens and access tokens off developer hosts entirely (complementary to in-process obfuscation).
+- [`privacy-gate.md`](./privacy-gate.md) -- asks before personal data (names, e-mail addresses, phone and ID numbers) in prompts and tool output goes to a cloud model; secret obfuscation covers credentials, not personal data.

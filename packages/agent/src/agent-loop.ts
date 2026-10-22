@@ -1917,6 +1917,11 @@ function openLiveSteering(
 			const transformed = config.transformContext
 				? await config.transformContext(messages, bound(signal))
 				: messages;
+			// The transform may have switched the active model (the coding agent's PII gate does). This
+			// call stays on the model it started with, so the steering waits for the next boundary, whose
+			// request is built for the new one.
+			const active = config.getModel?.() ?? config.model;
+			if (active.provider !== prepared.model.provider || active.id !== prepared.model.id) return undefined;
 			const converted = normalizeMessagesForProvider(await config.convertToLlm(transformed), prepared.model);
 			const userMessages: UserMessage[] = [];
 			for (const message of converted) {
@@ -1936,11 +1941,13 @@ async function prepareProviderCall(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 ): Promise<PreparedProviderCall> {
-	const model = config.getModel?.() ?? config.model;
 	let messages = context.messages;
 	if (config.transformContext) {
 		messages = await config.transformContext(messages, signal);
 	}
+	// After `transformContext`: a transform that switches the active model (the coding agent's PII gate
+	// does) applies to this same request.
+	const model = config.getModel?.() ?? config.model;
 
 	const llmMessages = await config.convertToLlm(messages);
 	const normalizedMessages = normalizeMessagesForProvider(llmMessages, model);

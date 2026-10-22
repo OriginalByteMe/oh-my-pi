@@ -17,6 +17,7 @@ import type {
 	AgentTool,
 	AgentToolContext,
 	SpeculativePhysicalOutcome,
+	StreamFn,
 	ToolCallContext,
 } from "@oh-my-pi/pi-agent-core/types";
 import { ASIDE_MESSAGE_COMMIT, ASIDE_MESSAGE_DISCARD, SPECULATIVE_STREAM_SESSION } from "@oh-my-pi/pi-agent-core/types";
@@ -694,6 +695,41 @@ describe("agentLoop with AgentMessage", () => {
 		expect(transformedMessages.length).toBe(2);
 		// Then convertToLlm receives the pruned messages
 		expect(convertedMessages.length).toBe(2);
+	});
+
+	it("sends the request to the model a transformContext switch selected", async () => {
+		// A transform that switches the active model (the coding agent's PII gate does) must apply to the
+		// request it is transforming for, not only to later ones.
+		const cloud = createMockModel({ id: "cloud", responses: [{ content: ["from cloud"] }] });
+		const local = createMockModel({ id: "local", responses: [{ content: ["from local"] }] });
+		let active = cloud.model;
+		const config: AgentLoopConfig = {
+			model: cloud.model,
+			getModel: () => active,
+			transformContext: async messages => {
+				active = local.model;
+				return messages;
+			},
+			convertToLlm: identityConverter,
+		};
+		const streamFn: StreamFn = (model, context, options) =>
+			(model === local.model ? local : cloud).stream(model, context, options);
+
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: ["You are helpful."], messages: [], tools: [] },
+			config,
+			undefined,
+			streamFn,
+		);
+		for await (const _ of stream) {
+			// drain
+		}
+
+		expect(cloud.calls).toHaveLength(0);
+		expect(local.calls).toHaveLength(1);
+		const reply = (await stream.result()).at(-1);
+		expect(reply?.role === "assistant" ? reply.model : undefined).toBe("local");
 	});
 
 	it("provides tool call batch context", async () => {

@@ -5,6 +5,7 @@
 ### Added
 
 - Anthropic web search and Files API uploads follow `PI_ANTHROPIC_API_VERSION=2026-10-21`; web search omits `temperature` under that version ([#16706](https://github.com/can1357/oh-my-pi/pull/16706) by [@H4vC](https://github.com/H4vC))
+- Added an opt-in PII privacy gate (`privacy.piiGate`): before a request goes to a cloud model, omp scans new prompts and tool output for personal data with a small local model and asks whether to send, switch to a local model (`privacy.localModel`, or a suggestion sized to this machine), or cancel; with no prompt UI the request is not sent, and session titles use only text the gate cleared
 
 ## [18.12.6] - 2026-10-21
 

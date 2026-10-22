@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The agent loop now reads the active model after `transformContext`, so a transform that switches the model applies to the request it was transforming; live steering waits for the next boundary when the transform switched the model
+
 ## [18.12.4] - 2026-10-20
 
 ### Fixed

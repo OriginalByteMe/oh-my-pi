@@ -5,9 +5,14 @@ export interface TinyTitleLocalModelSpec {
 	key: string;
 	/** ONNX export loaded by transformers.js on every platform. */
 	repo: string;
-	dtype: "q4";
-	/** Pre-quantized MLX export loaded by mlx-lm when `PI_TINY_DEVICE=mlx`. */
-	mlxRepo: string;
+	dtype: "q4" | "q8";
+	/**
+	 * Pipeline the ONNX worker loads; omitted means `text-generation` (chat/title models).
+	 * A `token-classification` model only answers `classify` requests, never `chat`.
+	 */
+	task?: "token-classification";
+	/** Pre-quantized MLX export loaded by mlx-lm when `PI_TINY_DEVICE=mlx`; absent for ONNX-only models. */
+	mlxRepo?: string;
 	label: string;
 	description: string;
 	contextNote: string;
@@ -139,14 +144,34 @@ export function isTinyMemoryReasoningModelKey(key: TinyMemoryLocalModelKey): boo
 	return "reasoning" in spec && spec.reasoning === true;
 }
 
-/** Any local model key (title or memory), used by the shared inference worker. */
-export type TinyLocalModelKey = TinyTitleLocalModelKey | TinyMemoryLocalModelKey;
+/**
+ * Token-classification (NER) models served by the same ONNX worker. ONNX-only: no `mlxRepo`.
+ * The shipped dtype is fixed; `PI_TINY_DTYPE` does not apply because quantizing a PII detector
+ * to the LLM-oriented q4/q2 levels would silently cost recall.
+ */
+export const TINY_CLASSIFIER_LOCAL_MODELS = [
+	{
+		key: "bert-small-pii",
+		repo: "onnx-community/bert-small-pii-detection-ONNX",
+		dtype: "q8",
+		task: "token-classification",
+		label: "BERT small PII detector",
+		description: "Local personal-data detector for the privacy gate (privacy.piiGate); about 29 MB cached.",
+		contextNote: "Not a chat model: labels names, emails, phone numbers, SSNs and similar spans.",
+	},
+] as const satisfies readonly TinyTitleLocalModelSpec[];
 
-/** Resolve a local model spec by key across both the title and memory registries. */
+export type TinyClassifierLocalModelKey = (typeof TINY_CLASSIFIER_LOCAL_MODELS)[number]["key"];
+
+/** Any local model key (title, memory, or classifier), used by the shared inference worker. */
+export type TinyLocalModelKey = TinyTitleLocalModelKey | TinyMemoryLocalModelKey | TinyClassifierLocalModelKey;
+
+/** Resolve a local model spec by key across the title, memory and classifier registries. */
 export function getTinyLocalModelSpec(key: string): TinyTitleLocalModelSpec | undefined {
 	return (
 		TINY_TITLE_LOCAL_MODELS.find(model => model.key === key) ??
-		TINY_MEMORY_LOCAL_MODELS.find(model => model.key === key)
+		TINY_MEMORY_LOCAL_MODELS.find(model => model.key === key) ??
+		TINY_CLASSIFIER_LOCAL_MODELS.find(model => model.key === key)
 	);
 }
 
@@ -154,8 +179,9 @@ export function isTinyLocalModelKey(value: string): value is TinyLocalModelKey {
 	return getTinyLocalModelSpec(value) !== undefined;
 }
 
-/** Combined local model registry (title + memory) for the shared tiny-models CLI. */
+/** Combined local model registry (title + memory + classifier) for the shared tiny-models CLI. */
 export const TINY_LOCAL_MODELS = [
 	...TINY_TITLE_LOCAL_MODELS,
 	...TINY_MEMORY_LOCAL_MODELS,
+	...TINY_CLASSIFIER_LOCAL_MODELS,
 ] as const satisfies readonly TinyTitleLocalModelSpec[];

@@ -410,6 +410,11 @@ export interface AgentSessionConfig {
 	 * RPC, ACP, SDK and subagent sessions stay unnamed. Default: false.
 	 */
 	autoTitle?: boolean;
+	/**
+	 * Whether `text` may go to the title model. The PII gate answers it (always yes while the gate is off);
+	 * a text it does not clear leaves the session untitled.
+	 */
+	clearsTitleText?: (text: string, signal: AbortSignal) => Promise<boolean>;
 }
 
 /** Options for AgentSession.prompt(). */

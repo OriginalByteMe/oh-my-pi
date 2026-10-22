@@ -6,14 +6,14 @@ export interface TinyWorkerServerOptions {
 	tag: string;
 	/** Idle window (nothing in flight, no request received) after which the process exits. */
 	idleMs: number;
-	/** Serve one `load`/`chat`; `reply.send` reaches only the requesting client. Errors become `error` replies. */
+	/** Serve one `load`/`chat`/`classify`; `reply.send` reaches only the requesting client. Errors become `error` replies. */
 	handle(
-		request: Extract<TinyWorkerRequest, { type: "load" | "chat" }>,
+		request: Extract<TinyWorkerRequest, { type: "load" | "chat" | "classify" }>,
 		reply: JsonLineReply<TinyWorkerResponse>,
 	): Promise<void>;
 }
 
-/** The ONNX worker's endpoint: answers `ping`/`shutdown` inline and serializes `load`/`chat` through one queue. */
+/** The ONNX worker's endpoint: answers `ping`/`shutdown` inline and serializes `load`/`chat`/`classify` through one queue. */
 export class TinyWorkerServer {
 	#options: TinyWorkerServerOptions;
 	#queue = Promise.resolve();

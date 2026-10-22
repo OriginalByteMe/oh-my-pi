@@ -272,7 +272,8 @@ const LOCAL_OPENAI_COMPAT_PROVIDERS: Record<string, true> = {
 	ollama: true,
 };
 const PROXY_OPENAI_COMPAT_PROVIDERS: Record<string, true> = { litellm: true };
-function hasLocalLoopbackBaseUrl(baseUrl: string | undefined): boolean {
+/** True when `baseUrl` is loopback, RFC1918 private, or a `.local` host: traffic that stays on this machine or LAN. */
+export function hasLocalLoopbackBaseUrl(baseUrl: string | undefined): boolean {
 	if (!baseUrl) return false;
 	let hostname: string;
 	try {

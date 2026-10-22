@@ -302,4 +302,51 @@ describe("agent loop live steering", () => {
 		expect(ended.flatMap(userTexts)).toEqual(["start"]);
 		expect(agent.peekSteeringQueue()).toEqual([]);
 	});
+
+	it("defers steering to the next boundary when the context transform switched the model", async () => {
+		// The in-flight response stays on the model it started with; steering handed to it would reach that
+		// model even though the transform (the coding agent's PII gate) moved the session to another one.
+		const cloud = createMockModel({ id: "cloud", responses: [{ content: ["first"] }] });
+		const local = createMockModel({ id: "local", responses: [{ content: ["second"] }] });
+		let active = cloud.model;
+		const queue: AgentMessage[] = [];
+		const calls: { model: string; texts: string[] }[] = [];
+		let claimedLive = true;
+		const streamFn: StreamFn = async (model, context, options) => {
+			calls.push({ model: model.id, texts: context.messages.map(textOf) });
+			if (calls.length === 1) {
+				queue.push(createUserMessage("my email is dana@example.com"));
+				claimedLive = (await options?.liveSteering?.claim(new AbortController().signal)) !== undefined;
+			}
+			return (model === local.model ? local : cloud).stream(model, context, options);
+		};
+		const config: AgentLoopConfig = {
+			model: cloud.model,
+			getModel: () => active,
+			transformContext: async messages => {
+				if (messages.some(message => message.role === "user" && userText(message).includes("dana@"))) {
+					active = local.model;
+				}
+				return messages;
+			},
+			convertToLlm,
+			getSteeringMessages: async () => queue.splice(0),
+			waitForSteeringMessages: async () => {},
+		};
+		const run = agentLoop(
+			[createUserMessage("start")],
+			{ systemPrompt: [""], messages: [], tools: [] },
+			config,
+			undefined,
+			streamFn,
+		);
+		for await (const _event of run) {
+			// drain
+		}
+
+		expect(claimedLive).toBe(false);
+		expect(calls.map(call => call.model)).toEqual(["cloud", "local"]);
+		expect(calls[0]!.texts).toEqual(["<user>start</user>"]);
+		expect(calls[1]!.texts).toEqual(["<user>start</user>", "first", "<user>my email is dana@example.com</user>"]);
+	});
 });
