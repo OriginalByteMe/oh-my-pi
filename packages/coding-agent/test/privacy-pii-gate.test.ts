@@ -231,7 +231,7 @@ describe("PII privacy gate", () => {
 		expect(title).toContain(CLOUD);
 		// No privacy.localModel yet: the question carries the hardware suggestion and offers no switch.
 		expect(title).toContain("ollama pull suggested:1b");
-		expect(labels).toEqual([`Send to ${CLOUD}`, "Cancel"]);
+		expect(labels).toEqual(["Cancel", `Send to ${CLOUD}`]);
 		expect(requests.map(request => request.model)).toEqual(["cloud-model"]);
 		expect(requests[0]!.messages).toContain(EMAIL);
 
@@ -274,7 +274,7 @@ describe("PII privacy gate", () => {
 
 		await session.sendUserMessage(`Mail ${EMAIL} the report`);
 
-		expect(questions[0]!.labels).toEqual([`Send to ${CLOUD}`, `Switch to local model ${LOCAL}`, "Cancel"]);
+		expect(questions[0]!.labels).toEqual([`Switch to local model ${LOCAL}`, "Cancel", `Send to ${CLOUD}`]);
 		// The suggestion is only for users who have not configured a local model.
 		expect(questions[0]!.title).not.toContain("suggested");
 		expect(requests.map(request => request.model)).toEqual(["local-model"]);
@@ -296,7 +296,7 @@ describe("PII privacy gate", () => {
 
 		await session.sendUserMessage(`Mail ${EMAIL} the report`);
 
-		expect(questions[0]!.labels).toEqual([`Send to ${CLOUD}`, "Cancel"]);
+		expect(questions[0]!.labels).toEqual(["Cancel", `Send to ${CLOUD}`]);
 		expect(questions[0]!.title).toContain(
 			`privacy.localModel is "${CLOUD}", but that is not an available local model`,
 		);
@@ -376,7 +376,7 @@ describe("PII privacy gate", () => {
 
 		await expect(side).rejects.toBeInstanceOf(PiiGateBlockedError);
 		// A switch could not redirect a request that names its model up front.
-		expect(questions[0]!.labels).toEqual([`Send to ${CLOUD}`, "Cancel"]);
+		expect(questions[0]!.labels).toEqual(["Cancel", `Send to ${CLOUD}`]);
 		// A refused side request fails alone; it does not abort the session's own turn.
 		expect(events.filter(event => event.type === "agent_end")).toEqual([]);
 	});

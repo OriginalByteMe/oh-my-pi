@@ -221,16 +221,18 @@ export class PiiGate {
 		const selector = this.#host.localModelSelector();
 		const sendLabel = `Send to ${target}`;
 		const switchLabel = `Switch to local model ${selector}`;
-		const choices: ExtensionUISelectItem[] = [
-			{ label: sendLabel, description: "Sends it; this text is not asked about again this session." },
-		];
+		// Safe choices first: the highlighted default (Enter) must never send.
+		const choices: ExtensionUISelectItem[] = [];
 		if (local) {
 			choices.push({
 				label: switchLabel,
 				description: "Keeps it on this machine; this request goes to the local model.",
 			});
 		}
-		choices.push({ label: "Cancel", description: "Nothing is sent." });
+		choices.push(
+			{ label: "Cancel", description: "Nothing is sent." },
+			{ label: sendLabel, description: "Sends it; this text is not asked about again this session." },
+		);
 
 		const hint = local ? undefined : await this.#localModelHint(selector, options.redirectable);
 		const question = [
